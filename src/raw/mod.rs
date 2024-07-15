@@ -2937,7 +2937,7 @@ impl RawTableInner {
             //    are already initialized.
             self.rehash_in_place(hasher, layout.size, drop);
             Ok(())
-        } else {
+        } else if self.is_empty_singleton() {
             // Otherwise, conservatively resize to at least the next size up
             // to avoid churning deletes into frequent rehashes.
             //
@@ -2954,6 +2954,110 @@ impl RawTableInner {
                 fallibility,
                 layout,
             )
+        } else {
+            // Grow the allocated table in-place.
+            let capacity = usize::max(new_items, full_capacity + 1);
+            let buckets =
+                capacity_to_buckets(capacity).ok_or_else(|| fallibility.capacity_overflow())?;
+
+            let (old_layout, old_ctrl_offset) = match layout.calculate_layout_for(self.buckets()) {
+                Some(lco) => lco,
+                None => hint::unreachable_unchecked(),
+            };
+
+            // Avoid `Option::ok_or_else` because it bloats LLVM IR.
+            let (new_layout, ctrl_offset) = match layout.calculate_layout_for(buckets) {
+                Some(lco) => lco,
+                None => return Err(fallibility.capacity_overflow()),
+            };
+
+            let old_num_ctrl_bytes = self.num_ctrl_bytes();
+            println!(
+                "old_control_bytes={:02x?}",
+                std::slice::from_raw_parts(self.ctrl.as_ptr(), old_num_ctrl_bytes)
+            );
+            println!(
+                "old_buckets={:x?}",
+                std::slice::from_raw_parts(
+                    self.ctrl.as_ptr().sub(old_ctrl_offset),
+                    old_ctrl_offset
+                )
+            );
+
+            // TODO: Make different versions, just like `fn do_alloc` has.
+            let ptr: NonNull<u8> = match alloc.grow(
+                NonNull::new_unchecked(self.ctrl.as_ptr().sub(old_ctrl_offset)),
+                old_layout,
+                new_layout,
+            ) {
+                Ok(ptr) => ptr.cast(),
+                Err(_) => return Err(fallibility.alloc_err(new_layout)),
+            };
+
+            // SAFETY: null pointer will be caught in above check
+            self.ctrl = NonNull::new_unchecked(ptr.as_ptr().add(ctrl_offset));
+
+            println!(
+                "old_ctrl_offset={old_ctrl_offset}, ctrl_offset={ctrl_offset}, old_num_ctrl_bytes={old_num_ctrl_bytes}, old_layout.size={}, new_layout.size={}",
+                old_layout.size(), new_layout.size()
+            );
+            // The ctrl_offset increased,
+            // so both the buckets and the control bytes need to be moved.
+            //
+            // OLD_BUCKETS  |  OLD_CTRL
+            // |
+            // -----------------           ptr
+            //                 |            |
+            //                 v            v
+            // NEW_BUCKETS  |  OLD_BUCKETS  |  OLD_CTRL  |  NEW_CTRL
+            //         |                    |      |
+            // Sizes:  v                    |      v
+            // ctrl_offset_inc              |  old_num_ctrl_bytes
+            //           ctrl_offset        |     num_ctrl_bytes
+            //
+            // SAFETY: Both the old and new control byte regions are
+            // valid for reads and writes, and are properly aligned.
+            let ctrl_offset_inc = ctrl_offset - old_ctrl_offset;
+            ptr.as_ptr().copy_to(
+                ptr.as_ptr().add(ctrl_offset_inc),
+                old_ctrl_offset + old_num_ctrl_bytes,
+            );
+            // Zero out the new buckets to prevent making a mess when rehashing.
+            ptr.as_ptr().write_bytes(0, ctrl_offset_inc);
+
+            self.bucket_mask = buckets - 1;
+            let num_ctrl_bytes = self.num_ctrl_bytes();
+            // Not only do we need to set the new control bytes to EMPTY,
+            // we also need to set `Group::WIDTH` old padding control bytes to
+            // EMPTY.
+            // SAFETY: We checked that the table is allocated and therefore the table already has
+            // `buckets + Group::WIDTH` number of control bytes (see TableLayout::calculate_layout_for)
+            // so writing `old_num_ctrl_bytes - Group::WIDTH == old_self.buckets()` bytes is safe.
+            self.ctrl(old_num_ctrl_bytes - Group::WIDTH)
+                .write_bytes(EMPTY, num_ctrl_bytes - old_num_ctrl_bytes + Group::WIDTH);
+
+            println!(
+                "new_control_bytes={:02x?}",
+                std::slice::from_raw_parts(self.ctrl.as_ptr(), num_ctrl_bytes)
+            );
+            println!(
+                "new_buckets={:x?}",
+                std::slice::from_raw_parts(self.ctrl.as_ptr().sub(ctrl_offset), ctrl_offset)
+            );
+
+            self.growth_left = bucket_mask_to_capacity(buckets - 1);
+
+            // TODO: What if this panics?
+            self.rehash_in_place(hasher, layout.size, drop);
+            println!(
+                "rehash_ctrl_bytes={:02x?}",
+                std::slice::from_raw_parts(self.ctrl.as_ptr(), num_ctrl_bytes)
+            );
+            println!(
+                "rehash_bkts={:x?}",
+                std::slice::from_raw_parts(self.ctrl.as_ptr().sub(ctrl_offset), ctrl_offset)
+            );
+            Ok(())
         }
     }
 
@@ -3152,6 +3256,10 @@ impl RawTableInner {
         // element since we lost their hash and have no way of recovering it
         // without risking another panic.
         self.prepare_rehash_in_place();
+        println!(
+            "preped_ctrl_bytes={:02x?}",
+            std::slice::from_raw_parts(self.ctrl.as_ptr(), self.num_ctrl_bytes())
+        );
 
         let mut guard = guard(self, move |self_| {
             if let Some(drop) = drop {
