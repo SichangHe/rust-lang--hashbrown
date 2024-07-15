@@ -2062,7 +2062,7 @@ impl RawTableInner {
     /// [`RawTableInner::ctrl`]: RawTableInner::ctrl
     /// [`RawTableInner::set_ctrl_h2`]: RawTableInner::set_ctrl_h2
     /// [`RawTableInner::find_insert_slot`]: RawTableInner::find_insert_slot
-    #[inline]
+    #[inline(never)] // I want to see this in the flamegraph.
     unsafe fn prepare_insert_slot(&mut self, hash: u64) -> (usize, u8) {
         // SAFETY: Caller of this function ensures that the control bytes are properly initialized.
         let index: usize = self.find_insert_slot(hash).index;
@@ -2105,7 +2105,7 @@ impl RawTableInner {
     /// control bytes outside the table range.
     ///
     /// [`undefined behavior`]: https://doc.rust-lang.org/reference/behavior-considered-undefined.html
-    #[inline]
+    #[inline(never)] // I want to see this in the flamegraph.
     unsafe fn find_insert_slot(&self, hash: u64) -> InsertSlot {
         let mut probe_seq = self.probe_seq(hash);
         loop {
@@ -2236,7 +2236,7 @@ impl RawTableInner {
     /// [`Bucket::as_ptr`]: Bucket::as_ptr
     /// [`undefined behavior`]: https://doc.rust-lang.org/reference/behavior-considered-undefined.html
     #[allow(clippy::mut_mut)]
-    #[inline]
+    #[inline(never)] // I want to see this in the flamegraph.
     unsafe fn prepare_rehash_in_place(&mut self) {
         // Bulk convert all full control bytes to DELETED, and all DELETED control bytes to EMPTY.
         // This effectively frees up all buckets containing a DELETED entry.
@@ -2633,7 +2633,7 @@ impl RawTableInner {
         self.items += 1;
     }
 
-    #[inline]
+    #[inline(never)] // I want to see this in the flamegraph.
     fn is_in_same_group(&self, i: usize, new_i: usize, hash: u64) -> bool {
         let probe_seq_pos = self.probe_seq(hash).pos;
         let probe_index =
