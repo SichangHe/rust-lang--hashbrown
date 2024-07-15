@@ -3236,6 +3236,8 @@ impl RawTableInner {
             self_.growth_left = bucket_mask_to_capacity(self_.bucket_mask) - self_.items;
         });
 
+        let (mut deleted, mut in_same_group, mut copy, mut swap) = (0, 0, 0, 0);
+
         // At this point, DELETED elements are elements that we haven't
         // rehashed yet. Find them and re-insert them at their ideal
         // position.
@@ -3243,6 +3245,7 @@ impl RawTableInner {
             if *guard.ctrl(i) != DELETED {
                 continue;
             }
+            deleted += 1;
 
             let i_p = guard.bucket_ptr(i, size_of);
 
@@ -3262,6 +3265,7 @@ impl RawTableInner {
                 // same unaligned group, then there is no benefit in moving
                 // it and we can just continue to the next item.
                 if likely(guard.is_in_same_group(i, new_i, hash)) {
+                    in_same_group += 1;
                     guard.set_ctrl_h2(i, hash);
                     continue 'outer;
                 }
@@ -3272,6 +3276,7 @@ impl RawTableInner {
                 // our H2 to the control byte of the new position.
                 let prev_ctrl = guard.replace_ctrl_h2(new_i, hash);
                 if prev_ctrl == EMPTY {
+                    copy += 1;
                     guard.set_ctrl(i, EMPTY);
                     // If the target slot is empty, simply move the current
                     // element into the new slot and clear the old control
@@ -3279,6 +3284,7 @@ impl RawTableInner {
                     ptr::copy_nonoverlapping(i_p, new_i_p, size_of);
                     continue 'outer;
                 } else {
+                    swap += 1;
                     // If the target slot is occupied, swap the two elements
                     // and then continue processing the element that we just
                     // swapped into the old slot.
@@ -3288,6 +3294,11 @@ impl RawTableInner {
                 }
             }
         }
+
+        println!(
+            "deleted={}, in_same_group={}, copy={}, swap={}",
+            deleted, in_same_group, copy, swap
+        );
 
         guard.growth_left = bucket_mask_to_capacity(guard.bucket_mask) - guard.items;
 
