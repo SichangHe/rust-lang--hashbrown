@@ -3007,8 +3007,6 @@ impl RawTableInner {
                 ptr.as_ptr().add(ctrl_offset_inc),
                 old_ctrl_offset + old_num_ctrl_bytes,
             );
-            // Zero out the new buckets to prevent making a mess when rehashing.
-            ptr.as_ptr().write_bytes(0, ctrl_offset_inc);
 
             self.bucket_mask = buckets - 1;
             let num_ctrl_bytes = self.num_ctrl_bytes();
