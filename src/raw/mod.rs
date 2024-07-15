@@ -3208,9 +3208,7 @@ impl RawTableInner {
     /// * The [`RawTableInner`] must have properly initialized control bytes.
     ///
     /// [`undefined behavior`]: https://doc.rust-lang.org/reference/behavior-considered-undefined.html
-    #[allow(clippy::inline_always)]
-    #[cfg_attr(feature = "inline-more", inline(always))]
-    #[cfg_attr(not(feature = "inline-more"), inline)]
+    #[inline(never)] // I wan to see it on the flamegraph.
     unsafe fn rehash_in_place(
         &mut self,
         hasher: &dyn Fn(&mut Self, usize) -> u64,

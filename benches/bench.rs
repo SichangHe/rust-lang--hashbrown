@@ -15,7 +15,7 @@ use std::{
     sync::atomic::{self, AtomicUsize},
 };
 
-const SIZE: usize = 1000;
+const SIZE: usize = 100000;
 
 // The default hashmap when using this crate directly.
 type AHashMap<K, V> = HashMap<K, V, DefaultHashBuilder>;
